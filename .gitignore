@@ -1,0 +1,39 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Windows builds and bundled dependencies (keep the PyInstaller .spec tracked)
+/build/
+/dist/
+/_internal/
+*.exe
+*.dll
+*.pyd
+
+# Local coordinates, secrets, pairing records, and runtime diagnostics
+/config.json
+/.gps-*.json
+*.log
+/self-test.json
+/device-check.json
+.env
+.env.*
+!.env.example
+.pymobiledevice3/
+*.pem
+*.key
+
+# Local editor and OS state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
