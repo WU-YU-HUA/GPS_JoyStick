@@ -18,6 +18,8 @@ env/
 
 # Local coordinates, secrets, pairing records, and runtime diagnostics
 /config.json
+/record.json
+/.records-*.json
 /.gps-*.json
 *.log
 /self-test.json

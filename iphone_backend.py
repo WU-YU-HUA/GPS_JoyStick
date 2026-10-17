@@ -44,13 +44,27 @@ def validate_position(latitude, longitude):
     return latitude, longitude
 
 
-def move_position(latitude, longitude, east, north, seconds):
+def validate_speed(speed):
+    speed = float(speed)
+    if not math.isfinite(speed) or not 0.1 <= speed <= 1000:
+        raise ValueError("移動速度必須介於 0.1 與 1000 km/h。")
+    return speed
+
+
+def load_speed(path):
+    if not path.exists():
+        return SPEED_KMH
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    return validate_speed(data.get("speed_kmh", SPEED_KMH))
+
+
+def move_position(latitude, longitude, east, north, seconds, speed_kmh=SPEED_KMH):
     """Great-circle step, normalizing diagonals to the same total speed."""
     length = math.hypot(east, north)
     if not length or seconds <= 0:
         return latitude, longitude
     bearing = math.atan2(east / length, north / length)
-    distance = SPEED_KMH / 3.6 * seconds / EARTH_RADIUS_M
+    distance = speed_kmh / 3.6 * seconds / EARTH_RADIUS_M
     lat, lon = math.radians(latitude), math.radians(longitude)
     next_lat = math.asin(max(-1.0, min(1.0,
         math.sin(lat) * math.cos(distance)
@@ -69,13 +83,14 @@ def load_position(path):
     return validate_position(data["latitude"], data["longitude"])
 
 
-def save_position(path, position):
+def save_position(path, position, speed_kmh=SPEED_KMH):
     latitude, longitude = validate_position(*position)
+    speed_kmh = validate_speed(speed_kmh)
     # Atomic replace keeps the old config intact if writing is interrupted.
     fd, temporary = tempfile.mkstemp(prefix=".gps-", suffix=".json", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump({"latitude": latitude, "longitude": longitude}, stream, indent=2)
+            json.dump({"latitude": latitude, "longitude": longitude, "speed_kmh": speed_kmh}, stream, indent=2)
             stream.write("\n")
         os.replace(temporary, path)
     finally:
@@ -85,13 +100,14 @@ def save_position(path, position):
 class IPhoneWorker(threading.Thread):
     """Own all asyncio/device resources on one background thread; never call Tk."""
 
-    def __init__(self, position, events, *, clear_only=False):
+    def __init__(self, position, events, *, clear_only=False, speed_kmh=SPEED_KMH):
         super().__init__(name="iphone-location", daemon=False)
         self.position = validate_position(*position)
         self.events = events
         self.stop_requested = threading.Event()
         self._lock = threading.Lock()
         self._direction = (0, 0)
+        self._speed_kmh = validate_speed(speed_kmh)
         self.stage = "初始化"
         self.clear_only = clear_only
 
@@ -102,6 +118,11 @@ class IPhoneWorker(threading.Thread):
     def stop(self):
         self.direction(0, 0)
         self.stop_requested.set()
+
+    def set_speed(self, speed_kmh):
+        speed_kmh = validate_speed(speed_kmh)
+        with self._lock:
+            self._speed_kmh = speed_kmh
 
     def publish(self, kind, value):
         self.events.put((kind, value))
@@ -175,6 +196,7 @@ class IPhoneWorker(threading.Thread):
                 last_tick = now
                 with self._lock:
                     east, north = self._direction
+                    speed_kmh = self._speed_kmh
                 if self.stop_requested.is_set():
                     break
                 if tunnel.rsd is None:
@@ -182,7 +204,7 @@ class IPhoneWorker(threading.Thread):
                     raise ConnectionError("iPhone tunnel 已關閉，請確認 USB 連接並重新連線。")
                 if not (east or north):
                     continue
-                next_position = move_position(*self.position, east, north, elapsed)
+                next_position = move_position(*self.position, east, north, elapsed, speed_kmh)
                 self.stage = "DVT 移動座標更新"
                 await asyncio.wait_for(simulation.set(*next_position), timeout=8)
                 self.position = next_position  # Only commit acknowledged coordinates.

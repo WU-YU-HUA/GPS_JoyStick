@@ -1,30 +1,19 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
-$destination = Join-Path $PSScriptRoot 'dist\iPhoneGPSJoystick\config.json'
-$savedConfig = $null
-if (Test-Path -LiteralPath $destination) {
-    $savedConfig = [System.IO.File]::ReadAllBytes($destination)
-}
+$buildDirectory = Join-Path $PSScriptRoot ('.packaging-' + [guid]::NewGuid().ToString('N'))
 try {
-    python -m PyInstaller --noconfirm iphone_joystick.spec
+    New-Item -ItemType Directory -Path $buildDirectory | Out-Null
+    python -m PyInstaller --clean --noconfirm --noconsole --onefile --collect-all pytun_pmd3 --name iPhoneGPSJoystick --distpath $PSScriptRoot --workpath (Join-Path $buildDirectory 'work') --specpath $buildDirectory iphone_joystick.py
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed.' }
-    # A rebuild must not overwrite the user's last saved coordinates.
-    if ($null -eq $savedConfig -and -not (Test-Path -LiteralPath $destination)) {
-        $configSource = Join-Path $PSScriptRoot 'config.json'
-        if (-not (Test-Path -LiteralPath $configSource)) {
-            $configSource = Join-Path $PSScriptRoot 'config.example.json'
-        }
-        Copy-Item -LiteralPath $configSource -Destination $destination
-    }
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination 'dist\iPhoneGPSJoystick\README.md'
-    Write-Host 'Built: dist\iPhoneGPSJoystick\iPhoneGPSJoystick.exe'
+    Write-Host 'Built: iPhoneGPSJoystick.exe (single file)'
 } finally {
-    if ($null -ne $savedConfig) {
-        $configDirectory = Split-Path -Parent $destination
-        if (-not (Test-Path -LiteralPath $configDirectory)) {
-            New-Item -ItemType Directory -Path $configDirectory -Force | Out-Null
-        }
-        [System.IO.File]::WriteAllBytes($destination, $savedConfig)
+    $resolvedBuildDirectory = [System.IO.Path]::GetFullPath($buildDirectory)
+    $workspacePrefix = [System.IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') + '\'
+    if (-not $resolvedBuildDirectory.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Refusing to remove a build directory outside the project.'
+    }
+    if (Test-Path -LiteralPath $resolvedBuildDirectory) {
+        Remove-Item -LiteralPath $resolvedBuildDirectory -Recurse -Force
     }
     Pop-Location
 }
