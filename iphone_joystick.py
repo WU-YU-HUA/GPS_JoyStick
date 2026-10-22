@@ -13,7 +13,7 @@ from iphone_backend import (
     save_position, validate_position, validate_speed,
 )
 from pc_location import get_computer_position
-from location_records import append_record, load_records
+from location_records import append_record, load_records, save_records
 
 APP_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.json"
@@ -26,6 +26,7 @@ class JoystickApp:
         self.worker = None
         self.events = queue.Queue()
         self.keys = set()
+        self.locked_direction = None
         self.connected = False
         self.closing = False
         self.last_confirmed = None
@@ -105,8 +106,15 @@ class JoystickApp:
                 label = tk.Label(pad, text=text, font=("Segoe UI", 12), bg="#eeeeee", padx=8, pady=8)
                 label.grid(row=row, column=col, sticky="ew", padx=3, pady=3)
                 self.direction_labels[east, north] = label
+                label.configure(cursor="hand2")
+                if (east, north) == (0, 0):
+                    label.bind("<Button-1>", lambda event: self.release_all())
+                else:
+                    label.bind("<Double-Button-1>",
+                               lambda event, e=east, n=north: self.lock_direction(e, n))
         ttk.Label(frame, textvariable=self.motion).grid(row=8, column=0, columnspan=2, sticky="w")
-        ttk.Label(frame, text="按住移動，放開停止；切離視窗停止。斜向速度相同。\n"
+        ttk.Label(frame, text="按住鍵盤移動，放開停止；雙擊方向可鎖定持續移動。\n"
+                  "鎖定後切換視窗／最小化仍會移動；點停止／中斷可解除。\n"
                   "中斷連線／關閉時保存最後位置，並清除手機模擬定位。",
                   wraplength=540).grid(row=9, column=0, columnspan=2, sticky="w", pady=8)
         self.log = scrolledtext.ScrolledText(frame, height=6, state="disabled", wrap="word")
@@ -134,15 +142,18 @@ class JoystickApp:
         scrollbar = ttk.Scrollbar(records_frame, orient="vertical", command=self.record_tree.yview)
         scrollbar.grid(row=1, column=3, sticky="ns")
         self.record_tree.configure(yscrollcommand=scrollbar.set)
-        ttk.Button(records_frame, text="使用選取地點", command=self.use_record).grid(row=2, column=0, columnspan=2, sticky="w")
-        ttk.Button(records_frame, text="重新讀取", command=self.reload_records).grid(row=2, column=2, sticky="e")
+        record_actions = ttk.Frame(records_frame)
+        record_actions.grid(row=2, column=0, columnspan=3, sticky="ew")
+        for text, command in [("使用選取地點", self.use_record), ("編輯選取地點", self.edit_record),
+                              ("刪除選取地點", self.delete_record), ("重新讀取", self.reload_records)]:
+            ttk.Button(record_actions, text=text, command=command).pack(side="left", padx=(0, 6))
         self.record_tree.bind("<Double-1>", lambda event: self.use_record())
         self.records = []
         self.reload_records()
         root.bind("<KeyPress>", self.key_down)
         root.bind("<KeyRelease>", self.key_up)
-        root.bind("<FocusOut>", lambda event: self.release_all())
-        root.bind("<Unmap>", lambda event: self.release_all())
+        root.bind("<FocusOut>", self.on_focus_out)
+        root.bind("<Unmap>", lambda event: self.release_keyboard())
         self.write_log(load_error or f"啟動時從 {CONFIG_PATH.name} 載入座標。")
         root.after(50, self.poll)
 
@@ -187,6 +198,81 @@ class JoystickApp:
         for index, record in enumerate(records):
             self.record_tree.insert("", "end", iid=str(index), values=(record["label"] or "（未命名）", f'{record["latitude"]:.8f}', f'{record["longitude"]:.8f}'))
         return True
+
+    def selected_record_index(self):
+        selection = self.record_tree.selection()
+        if not selection:
+            self.status.set("請先選取一個收藏地點。")
+            return None
+        return int(selection[0])
+
+    def edit_record(self):
+        if self.closing:
+            return
+        index = self.selected_record_index()
+        if index is None:
+            return
+        self.release_all()
+        original = [dict(record) for record in self.records]
+        dialog = tk.Toplevel(self.root)
+        dialog.title("編輯收藏地點")
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+        panel = ttk.Frame(dialog, padding=20)
+        panel.pack(fill="both", expand=True)
+        variables = {}
+        for row, (key, title) in enumerate([("label", "標籤"), ("latitude", "緯度"), ("longitude", "經度")]):
+            ttk.Label(panel, text=title).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=6)
+            variables[key] = tk.StringVar(value=str(original[index][key]))
+            entry = ttk.Entry(panel, textvariable=variables[key], width=32)
+            entry.grid(row=row, column=1, pady=6)
+            if row == 0:
+                entry.focus_set()
+
+        def save():
+            try:
+                latitude, longitude = validate_position(variables["latitude"].get(), variables["longitude"].get())
+                records = [dict(record) for record in original]
+                records[index] = dict(label=variables["label"].get().strip(), latitude=latitude, longitude=longitude)
+                save_records(RECORD_PATH, records, expected=original)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                messagebox.showerror("儲存失敗", str(exc), parent=dialog)
+                return
+            dialog.destroy()
+            if self.reload_records():
+                self.record_tree.selection_set(str(index))
+                self.record_tree.see(str(index))
+            self.status.set("地點已更新至 record.json。")
+
+        actions = ttk.Frame(panel)
+        actions.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        ttk.Button(actions, text="取消", command=dialog.destroy).pack(side="left", padx=8)
+        ttk.Button(actions, text="儲存", command=save).pack(side="left")
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
+        dialog.grab_set()
+
+    def delete_record(self):
+        if self.closing:
+            return
+        index = self.selected_record_index()
+        if index is None:
+            return
+        self.release_all()
+        record = self.records[index]
+        if not messagebox.askyesno("刪除收藏地點", f'確定刪除「{record["label"] or "未命名地點"}」？\n此操作會儲存至 record.json。', parent=self.root):
+            return
+        records = [dict(item) for item in self.records]
+        del records[index]
+        try:
+            save_records(RECORD_PATH, records, expected=self.records)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            messagebox.showerror("刪除失敗", str(exc), parent=self.root)
+            return
+        if self.reload_records() and self.records:
+            selected = str(min(index, len(self.records) - 1))
+            self.record_tree.selection_set(selected)
+            self.record_tree.see(selected)
+        self.status.set("地點已從 record.json 刪除。")
 
     def record_current_position(self):
         if self.closing or self.locating or (self.worker and not self.connected):
@@ -263,6 +349,7 @@ class JoystickApp:
         if event.keysym.lower() in {"w", "a", "s", "d", "up", "left", "down", "right"}:
             if isinstance(self.root.focus_get(), (ttk.Entry, tk.Entry, tk.Text, ttk.Treeview, ttk.Combobox)):
                 return
+            self.locked_direction = None
             self.keys.add(event.keysym.lower())
             self.update_direction()
             return "break"
@@ -272,15 +359,40 @@ class JoystickApp:
         self.update_direction()
 
     def release_all(self):
+        self.locked_direction = None
+        self.release_keyboard()
+
+    def release_keyboard(self):
+        """Release physical keys while preserving explicit direction locks."""
         self.keys.clear()
         self.update_direction()
+
+    def lock_direction(self, east, north):
+        if not self.connected or not self.worker or self.closing:
+            return
+        self.root.focus_set()
+        self.keys.clear()
+        self.locked_direction = (east, north)
+        self.update_direction()
+        return "break"
+
+    def on_focus_out(self, event):
+        # Focus transfers between widgets also bubble to the root binding.
+        # Leaving the window releases physical keys, but keeps direction locks.
+        def check_focus():
+            if self.root.focus_get() is None:
+                self.release_keyboard()
+        self.root.after_idle(check_focus)
 
     def update_direction(self):
         east = int(bool(self.keys & {"d", "right"})) - int(bool(self.keys & {"a", "left"}))
         north = int(bool(self.keys & {"w", "up"})) - int(bool(self.keys & {"s", "down"}))
+        if self.locked_direction is not None:
+            east, north = self.locked_direction
         if self.worker:
             self.worker.direction(east, north)
-        self.motion.set(f"移動中 · {self.speed_kmh:g} km/h" if east or north else "停止")
+        state = "方向已鎖定" if self.locked_direction is not None else "移動中"
+        self.motion.set(f"{state} · {self.speed_kmh:g} km/h" if east or north else "停止")
         for direction, label in self.direction_labels.items():
             label.configure(bg="#9edfd0" if direction == (east, north) else "#eeeeee")
 
