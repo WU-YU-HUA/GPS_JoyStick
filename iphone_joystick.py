@@ -145,8 +145,14 @@ class JoystickApp:
         record_actions = ttk.Frame(records_frame)
         record_actions.grid(row=2, column=0, columnspan=3, sticky="ew")
         for text, command in [("使用選取地點", self.use_record), ("編輯選取地點", self.edit_record),
+                              ("更新地標", self.update_record_position),
                               ("刪除選取地點", self.delete_record), ("重新讀取", self.reload_records)]:
-            ttk.Button(record_actions, text=text, command=command).pack(side="left", padx=(0, 6))
+            button = ttk.Button(record_actions, text=text, command=command)
+            button.pack(side="left", padx=(0, 6))
+            if text == "更新地標":
+                self.update_record_button = button
+                button.configure(state="disabled")
+        self.record_tree.bind("<<TreeviewSelect>>", self.refresh_record_selection)
         self.record_tree.bind("<Double-1>", lambda event: self.use_record())
         self.records = []
         self.reload_records()
@@ -197,7 +203,44 @@ class JoystickApp:
         self.record_tree.delete(*self.record_tree.get_children())
         for index, record in enumerate(records):
             self.record_tree.insert("", "end", iid=str(index), values=(record["label"] or "（未命名）", f'{record["latitude"]:.8f}', f'{record["longitude"]:.8f}'))
+        self.refresh_record_selection()
         return True
+
+    def refresh_record_selection(self, event=None):
+        selection = self.record_tree.selection()
+        valid = bool(selection) and selection[0] in self.record_tree.get_children()
+        self.update_record_button.configure(state="normal" if valid else "disabled")
+
+    def current_record_position(self):
+        if self.connected:
+            if self.last_confirmed is None:
+                raise ValueError("尚未收到手機確認的座標。")
+            return self.last_confirmed
+        if self.mode.get() == "computer" and not self.computer_position_ready:
+            raise ValueError("請先取得電腦位置。")
+        return validate_position(self.latitude.get(), self.longitude.get())
+
+    def update_record_position(self):
+        if self.closing or self.locating or (self.worker and not self.connected):
+            return
+        index = self.selected_record_index()
+        if index is None:
+            return
+        self.release_all()
+        try:
+            latitude, longitude = self.current_record_position()
+            records = [dict(record) for record in self.records]
+            records[index].update(latitude=latitude, longitude=longitude)
+            save_records(RECORD_PATH, records, expected=self.records)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            messagebox.showerror("更新地標失敗", str(exc), parent=self.root)
+            return
+        if self.reload_records():
+            self.record_tree.selection_set(str(index))
+            self.record_tree.see(str(index))
+            self.refresh_record_selection()
+        self.status.set("所選地標的經緯度已更新至 record.json，標籤保持不變。")
+        self.root.focus_set()
 
     def selected_record_index(self):
         selection = self.record_tree.selection()
@@ -279,14 +322,7 @@ class JoystickApp:
             return
         self.release_all()
         try:
-            if self.connected:
-                if self.last_confirmed is None:
-                    raise ValueError("尚未收到手機確認的座標。")
-                position = self.last_confirmed
-            else:
-                if self.mode.get() == "computer" and not self.computer_position_ready:
-                    raise ValueError("請先取得電腦位置。")
-                position = validate_position(self.latitude.get(), self.longitude.get())
+            position = self.current_record_position()
             append_record(RECORD_PATH, self.record_label.get(), position)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             messagebox.showerror("紀錄失敗", str(exc))
