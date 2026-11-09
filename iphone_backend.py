@@ -76,6 +76,20 @@ def move_position(latitude, longitude, east, north, seconds, speed_kmh=SPEED_KMH
     return math.degrees(next_lat), (math.degrees(next_lon) + 180) % 360 - 180
 
 
+def step_toward(position, destination, seconds, speed_kmh):
+    """Follow the shortest great-circle path, clamping the final step."""
+    lat1, lon1 = map(math.radians, position)
+    lat2, lon2 = map(math.radians, destination)
+    delta = (lon2 - lon1 + math.pi) % (2 * math.pi) - math.pi
+    haversine = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(delta / 2) ** 2
+    distance = 2 * EARTH_RADIUS_M * math.asin(math.sqrt(max(0, min(1, haversine))))
+    if distance <= speed_kmh / 3.6 * seconds or distance <= 1e-6:
+        return destination, True
+    east = math.sin(delta) * math.cos(lat2)
+    north = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(delta)
+    return move_position(*position, east, north, seconds, speed_kmh), False
+
+
 def load_position(path):
     if not path.exists():
         return DEFAULT_POSITION
@@ -108,12 +122,24 @@ class IPhoneWorker(threading.Thread):
         self._lock = threading.Lock()
         self._direction = (0, 0)
         self._speed_kmh = validate_speed(speed_kmh)
+        self._destination = None
+        self._navigation_id = 0
         self.stage = "初始化"
         self.clear_only = clear_only
 
     def direction(self, east, north):
         with self._lock:
+            self._destination = None
+            self._navigation_id += 1
             self._direction = (east, north)
+
+    def navigate(self, latitude, longitude):
+        destination = validate_position(latitude, longitude)
+        with self._lock:
+            self._direction = (0, 0)
+            self._destination = destination
+            self._navigation_id += 1
+            return self._navigation_id
 
     def stop(self):
         self.direction(0, 0)
@@ -197,18 +223,30 @@ class IPhoneWorker(threading.Thread):
                 with self._lock:
                     east, north = self._direction
                     speed_kmh = self._speed_kmh
+                    destination = self._destination
+                    navigation_id = self._navigation_id
                 if self.stop_requested.is_set():
                     break
                 if tunnel.rsd is None:
                     self.stage = "USB / tunnel 連線中斷"
                     raise ConnectionError("iPhone tunnel 已關閉，請確認 USB 連接並重新連線。")
-                if not (east or north):
+                if destination is None and not (east or north):
                     continue
-                next_position = move_position(*self.position, east, north, elapsed, speed_kmh)
+                arrived = False
+                if destination is not None:
+                    next_position, arrived = step_toward(self.position, destination, elapsed, speed_kmh)
+                else:
+                    next_position = move_position(*self.position, east, north, elapsed, speed_kmh)
                 self.stage = "DVT 移動座標更新"
                 await asyncio.wait_for(simulation.set(*next_position), timeout=8)
                 self.position = next_position  # Only commit acknowledged coordinates.
                 self.publish("position", self.position)
+                if arrived:
+                    with self._lock:
+                        if self._navigation_id == navigation_id:
+                            self._destination = None
+                            self._direction = (0, 0)
+                            self.publish("arrived", navigation_id)
         finally:
             closed = False
             try:

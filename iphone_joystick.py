@@ -27,6 +27,7 @@ class JoystickApp:
         self.events = queue.Queue()
         self.keys = set()
         self.locked_direction = None
+        self.active_navigation = None
         self.connected = False
         self.closing = False
         self.last_confirmed = None
@@ -49,6 +50,8 @@ class JoystickApp:
         root.protocol("WM_DELETE_WINDOW", self.close)
         self.latitude = tk.StringVar(value=f"{self.position[0]:.8f}")
         self.longitude = tk.StringVar(value=f"{self.position[1]:.8f}")
+        self.destination_latitude = tk.StringVar()
+        self.destination_longitude = tk.StringVar()
         self.status = tk.StringVar(value="尚未連線。請接上 USB、解鎖 iPhone。")
         self.motion = tk.StringVar(value="停止")
         self.mode = tk.StringVar(value="custom")
@@ -82,11 +85,25 @@ class JoystickApp:
             row=11, column=0, columnspan=2, sticky="w")
         # Both starting-position modes use the same movement worker.
         self.entries = []
-        for row, label, variable in [(2, "緯度 Latitude", self.latitude), (3, "經度 Longitude", self.longitude)]:
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 20), pady=6)
-            entry = ttk.Entry(frame, textvariable=variable, font=("Consolas", 13))
-            entry.grid(row=row, column=1, sticky="ew", pady=6)
-            self.entries.append(entry)
+        coordinates = ttk.Frame(frame)
+        coordinates.grid(row=2, column=0, columnspan=2, sticky="ew")
+        for column, (title, variables) in enumerate([
+            ("現在地", (self.latitude, self.longitude)),
+            ("目的地", (self.destination_latitude, self.destination_longitude)),
+        ]):
+            coordinates.columnconfigure(column, weight=1, uniform="coordinates")
+            group = ttk.LabelFrame(coordinates, text=title, padding=8)
+            group.grid(row=0, column=column, sticky="nsew", padx=(0, 6) if column == 0 else (6, 0))
+            group.columnconfigure(1, weight=1)
+            for row, (label, variable) in enumerate(zip(("緯度", "經度"), variables)):
+                ttk.Label(group, text=label).grid(row=row, column=0, padx=(0, 8), pady=4)
+                entry = ttk.Entry(group, textvariable=variable, font=("Consolas", 12), width=18)
+                entry.grid(row=row, column=1, sticky="ew", pady=4)
+                if column == 0:
+                    self.entries.append(entry)
+            if column == 1:
+                self.navigate_button = ttk.Button(group, text="自動前往目的地", command=self.start_navigation, state="disabled")
+                self.navigate_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.button = ttk.Button(frame, text="連線並移動至輸入座標", command=self.toggle)
         self.button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(16, 8))
         self.clear_button = ttk.Button(frame, text="清除模擬定位（恢復真實 GPS）", command=self.clear_location)
@@ -352,6 +369,7 @@ class JoystickApp:
 
     def refresh_mode_controls(self):
         busy = bool(self.worker) or self.locating or self.closing
+        self.navigate_button.configure(state="normal" if self.connected and not self.closing else "disabled")
         for button in self.mode_buttons:
             button.configure(state="disabled" if busy else "normal")
         for entry in self.entries:
@@ -386,6 +404,7 @@ class JoystickApp:
             if isinstance(self.root.focus_get(), (ttk.Entry, tk.Entry, tk.Text, ttk.Treeview, ttk.Combobox)):
                 return
             self.locked_direction = None
+            self.active_navigation = None
             self.keys.add(event.keysym.lower())
             self.update_direction()
             return "break"
@@ -395,6 +414,7 @@ class JoystickApp:
         self.update_direction()
 
     def release_all(self):
+        self.active_navigation = None
         self.locked_direction = None
         self.release_keyboard()
 
@@ -407,6 +427,7 @@ class JoystickApp:
         if not self.connected or not self.worker or self.closing:
             return
         self.root.focus_set()
+        self.active_navigation = None
         self.keys.clear()
         self.locked_direction = (east, north)
         self.update_direction()
@@ -421,6 +442,9 @@ class JoystickApp:
         self.root.after_idle(check_focus)
 
     def update_direction(self):
+        if self.active_navigation is not None:
+            self.motion.set(f"自動前往目的地 · {self.speed_kmh:g} km/h")
+            return
         east = int(bool(self.keys & {"d", "right"})) - int(bool(self.keys & {"a", "left"}))
         north = int(bool(self.keys & {"w", "up"})) - int(bool(self.keys & {"s", "down"}))
         if self.locked_direction is not None:
@@ -432,11 +456,29 @@ class JoystickApp:
         for direction, label in self.direction_labels.items():
             label.configure(bg="#9edfd0" if direction == (east, north) else "#eeeeee")
 
+    def start_navigation(self):
+        if not self.connected or not self.worker or self.closing:
+            self.status.set("請先連線至現在地，再開始自動前往。")
+            return
+        try:
+            destination = validate_position(self.destination_latitude.get(), self.destination_longitude.get())
+        except ValueError as exc:
+            messagebox.showerror("目的地無效", str(exc), parent=self.root)
+            return
+        self.release_all()
+        self.active_navigation = self.worker.navigate(*destination)
+        for label in self.direction_labels.values():
+            label.configure(bg="#eeeeee")
+        self.update_direction()
+        self.status.set("正在直線前往目的地；到達後會停止。點停止或使用移動鍵可取消。")
+        self.root.focus_set()
+
     def toggle(self):
         if self.closing or self.locating:
             return
         if self.worker:
             self.connected = False
+            self.navigate_button.configure(state="disabled")
             self.release_all()
             self.worker.stop()
             self.button.configure(state="disabled", text="正在中斷連線…")
@@ -500,9 +542,14 @@ class JoystickApp:
                 elif kind == "connected":
                     if not self.closing and not self.worker.stop_requested.is_set():
                         self.connected = True
+                        self.navigate_button.configure(state="normal")
                         self.status.set(value)
                         self.button.configure(state="normal", text="中斷連線並清除模擬定位")
                         self.root.focus_set()
+                elif kind == "arrived":
+                    if value == self.active_navigation:
+                        self.release_all()
+                        self.status.set("已到達目的地，移動已停止；連線保留。")
                 elif kind == "status":
                     self.status.set(value)
                 elif kind == "error":
