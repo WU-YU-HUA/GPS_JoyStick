@@ -27,16 +27,16 @@ conda create -n iphone-gps python=3.12 pip -y
 ```powershell
 conda activate iphone-gps
 python -m pip install -r requirements.txt
-python iphone_joystick.py
+python pyside_gps.py
 ```
 
-Tkinter 隨此 conda Python 提供，不需要另外 pip 安裝。
+PySide6 會由 `requirements.txt` 安裝。舊版 Tkinter 畫面仍可用 `python iphone_joystick.py` 啟動；Tkinter 隨 Python 提供，不需要另外 pip 安裝。
 
 ## 日常啟動與操作
 
 ```powershell
 conda activate iphone-gps
-python iphone_joystick.py
+python pyside_gps.py
 ```
 
 1. USB 連接 iPhone，解鎖並信任電腦，保持開發者模式開啟。
@@ -114,7 +114,7 @@ clear 呼叫不等待 iOS 回報 GPS 已恢復，所以沒有錯誤不代表真�
 
 ### 給 Agent 的打包要求
 
-- 一律執行根目錄的 `build.ps1`，使用 `--noconsole --onefile --collect-all pytun_pmd3`。
+- 一律執行根目錄的 `build.ps1`，以 `pyside_gps.py` 為入口，使用 `--noconsole --onefile --collect-all pytun_pmd3`。
 - 輸出必須是根目錄的單一 `iPhoneGPSJoystick.exe`，取代舊 EXE，不使用需要 `_internal` 的資料夾版本。
 - 打包結束後移除本次產生的建置目錄、暫存 spec、驗證副本及診斷產物；不要刪除原始碼、既有 spec、`config.json`、`record.json` 或使用者日誌。
 - 保留使用者既有經緯度、速度及收藏，不要以範例設定覆蓋。設定與收藏不嵌入 EXE，執行時在 EXE 旁讀寫。
@@ -134,7 +134,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 腳本會使用以下打包選項，另透過 `--workpath` 與 `--specpath` 將中間產物放入獨立暫存資料夾，結束後自動刪除。原始碼與既有的 `config.json` 會保留。
 
 ```powershell
-python -m PyInstaller --clean --noconfirm --noconsole --onefile --collect-all pytun_pmd3 --name iPhoneGPSJoystick --distpath . iphone_joystick.py
+python -m PyInstaller --clean --noconfirm --noconsole --onefile --collect-all pytun_pmd3 --name iPhoneGPSJoystick --distpath . pyside_gps.py
 ```
 
 上面是直接打包指令，會留下預設的 `build` 資料夾與產生的 `iPhoneGPSJoystick.spec`；需要自動清理時請執行 `build.ps1`。
@@ -157,7 +157,7 @@ iPhoneGPSJoystick.exe
 .\iPhoneGPSJoystick.exe --self-test
 ```
 
-成功會在 EXE 旁產生 `self-test.json`，包含 Tk 版本、config 路徑及後端匯入檢查結果。
+成功會在 EXE 旁產生 `self-test.json`，包含 PySide6 版本、config 路徑及後端匯入檢查結果。
 此檢查不改定位，也不能取代 EXE 的實機移動與 clear 人工驗證。
 
 若要用 EXE 檢查實機開發者連線（不設定／清除定位）：

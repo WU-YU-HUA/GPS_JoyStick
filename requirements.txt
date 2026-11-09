@@ -1,1 +1,6 @@
+# Direct runtime dependencies: iPhone communication and the PySide6 interface.
 pymobiledevice3==11.32.0
+PySide6==6.12.0
+
+# Other imports use Python's standard library. Build-only packages are in
+# requirements-build.txt.
