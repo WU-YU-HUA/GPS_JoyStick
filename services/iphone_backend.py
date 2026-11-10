@@ -112,7 +112,7 @@ def save_position(path, position, speed_kmh=SPEED_KMH):
 
 
 class IPhoneWorker(threading.Thread):
-    """Own all asyncio/device resources on one background thread; never call Tk."""
+    """Own asyncio/device resources on one background thread; never call the UI."""
 
     def __init__(self, position, events, *, clear_only=False, speed_kmh=SPEED_KMH):
         super().__init__(name="iphone-location", daemon=False)

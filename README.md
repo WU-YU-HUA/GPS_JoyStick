@@ -30,15 +30,17 @@ python -m pip install -r requirements.txt
 python pyside_gps.py
 ```
 
-PySide6 會由 `requirements.txt` 安裝。舊版 Tkinter 畫面仍可用 `python iphone_joystick.py` 啟動；Tkinter 隨 Python 提供，不需要另外 pip 安裝。
+PySide6 會由 `requirements.txt` 安裝。程式只保留 PySide6 介面，使用 `python pyside_gps.py` 啟動。
 
 ## 專案分層
 
-- `ui/schema.py` 是 Tk 與 PySide 共用的畫面設定，包含區塊啟用、各 renderer 的布局槽位、標籤、欄位、方向盤格位和按鈕 handler 名稱。從 `SCREEN_COMPONENTS` 移除一個區塊，或把 `enabled` 設為 `False`，兩邊都會隱藏該區塊。
-- `ui/tk_renderer.py` 和 `ui/pyside_renderer.py` 分別用各自工具包把設定 render 成原生元件；根目錄的 `iphone_joystick.py`、`pyside_gps.py` 只負責呼叫對應 renderer。
+跨電腦或交接給 coding agent 時，請先看根目錄的 [`AGENTS.md`](AGENTS.md)，其中記錄元件應放置的位置與新增 UI 的修改流程。
+
+- `ui/schema.py` 集中管理畫面區塊、PySide 布局槽位、標籤、欄位、方向盤格位和按鈕 handler 名稱。從 `SCREEN_COMPONENTS` 移除一個區塊，或把 `enabled` 設為 `False`，該區塊就會隱藏。
+- `ui/pyside_renderer.py` 使用 PySide6 將設定 render 成原生元件；根目錄的 `pyside_gps.py` 負責呼叫 renderer。
 - `controller/joystick_controller.py` 放共用操作邏輯，`controller/movement.py` 共用鍵盤／方向盤輸入狀態與方向計算；`services/` 放 iPhone worker、定位和收藏資料服務。
 
-新增既有收藏區塊的按鈕，可在 `RECORD_ACTIONS` 設定標籤與 handler；對應方法需要存在於兩個 renderer。新增全新的區塊類型，則需在兩個 renderer 各註冊一次原生呈現方式；資料與共用操作仍可放在 schema 和 controller。
+新增既有收藏區塊的按鈕，可在 `RECORD_ACTIONS` 設定標籤與 handler；對應方法需存在於 renderer。新增全新的區塊類型，則需在 PySide renderer 註冊原生呈現方式；資料與共用操作仍可放在 schema 和 controller。
 
 ## 日常啟動與操作
 
@@ -77,7 +79,7 @@ GUI 顯示的是最後成功送出的模擬座標，不是讀取手機真實 GPS
 
 自動前往可在背景持續執行；點中央「停止」、中斷連線、關閉、使用 WASD／方向鍵或雙擊方向鎖定，會取消自動前往。套用速度也會先停止，需再次按「自動前往目的地」繼續。修改目的地欄位後須再按前往，才會改用新目的地。
 
-此功能已包含在新版 `iPhoneGPSJoystick.exe`，也可用 `python pyside_gps.py` 或 `python iphone_joystick.py` 執行。
+此功能已包含在新版 `iPhoneGPSJoystick.exe`，也可用 `python pyside_gps.py` 執行。
 
 ## 收藏與選取地點
 

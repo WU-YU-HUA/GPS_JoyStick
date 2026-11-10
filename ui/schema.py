@@ -1,4 +1,4 @@
-"""Toolkit-neutral screen content shared by the Tk and PySide frontends.
+"""Shared PySide screen content and layout configuration.
 
 Order and grouping are semantic. Each frontend maps them to its native layout
 manager so resizing and platform font metrics remain under that toolkit's control.
@@ -25,21 +25,6 @@ SECTION_TITLES = {
 
 # Logical placements are shared configuration. Each renderer maps these slots
 # to its own layout manager; no pixel coordinates are stored here.
-TK_COMPONENT_LAYOUT = {
-    "settings": {
-        "rows": {
-            "title": 0,
-            "mode": 1,
-            "coordinates": 2,
-            "connect": 5,
-            "clear": 6,
-            "status": 7,
-        }
-    },
-    "records": {"rows": {"panel": 4}},
-    "directions": {"rows": {"pad": 8, "motion": 9, "help": 10}},
-    "log": {"rows": {"panel": 11}},
-}
 PYSIDE_COMPONENT_LAYOUT = {
     "primary": ("settings", "directions"),
     "secondary": ("records", "log"),
@@ -115,11 +100,11 @@ RECORD_ACTIONS = (
     },
 )
 
-# Each cell is (Tk label, Qt label, east, north); row/column placement is shared.
+# Each cell is (label, east, north); row/column placement is shared.
 DIRECTION_GRID = (
-    (("WA ↖", "↖", -1, 1), ("W ↑", "↑", 0, 1), ("WD ↗", "↗", 1, 1)),
-    (("A ←", "←", -1, 0), ("停止", "停止", 0, 0), ("D →", "→", 1, 0)),
-    (("SA ↙", "↙", -1, -1), ("S ↓", "↓", 0, -1), ("SD ↘", "↘", 1, -1)),
+    (("↖", -1, 1), ("↑", 0, 1), ("↗", 1, 1)),
+    (("←", -1, 0), ("停止", 0, 0), ("→", 1, 0)),
+    (("↙", -1, -1), ("↓", 0, -1), ("↘", 1, -1)),
 )
 
 MOTION_HELP = (

@@ -338,7 +338,7 @@ class JoystickWindow(QMainWindow):
         pad.setVerticalSpacing(8)
         self.direction_buttons = {}
         for row, cells in enumerate(DIRECTION_GRID):
-            for column, (_tk_text, text, east, north) in enumerate(cells):
+            for column, (text, east, north) in enumerate(cells):
                 direction = (east, north)
                 if direction == (0, 0):
                     button = QPushButton(ACTION_LABELS["stop"])

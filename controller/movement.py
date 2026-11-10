@@ -1,4 +1,4 @@
-"""Shared keyboard, mouse-direction, and lock state for both renderers."""
+"""Keyboard, mouse-direction, and lock state shared by the PySide controls."""
 
 KEY_DIRECTIONS = {
     "w": (0, 1),

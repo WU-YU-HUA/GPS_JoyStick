@@ -1,4 +1,4 @@
-"""Shared application operations used by both native GUI frontends."""
+"""Shared application operations used by the PySide interface."""
 
 import threading
 import time
@@ -22,7 +22,7 @@ COMPUTER_LOCATION_MAX_ATTEMPTS = 5
 class JoystickController:
     """Toolkit-independent state and use cases for the joystick application.
 
-    Tk and Qt own their widgets, event loops, and visual feedback. Both delegate
+    The PySide renderer owns widgets, events, and visual feedback. It delegates
     settings, coordinate validation, record CRUD, and worker setup to this class.
     """
 
