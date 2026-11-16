@@ -42,6 +42,7 @@ from ui.schema import (
     ACTION_LABELS,
     APP_TITLE,
     COORDINATE_FIELDS,
+    COORDINATE_PAIR_FIELD,
     COORDINATE_PANELS,
     DIRECTION_GRID,
     MODE_OPTIONS,
@@ -299,8 +300,20 @@ class JoystickWindow(QMainWindow):
         coordinate_row = QHBoxLayout()
         coordinate_row.setSpacing(10)
         self.coordinate_edits = {}
+        self.coordinate_pair_edits = {}
+        self.coordinate_fields_by_panel = {
+            panel_spec["id"]: panel_spec["fields"]
+            for panel_spec in COORDINATE_PANELS
+        }
         for panel_spec in COORDINATE_PANELS:
             coordinate_panel, panel_layout = self._coordinate_panel(panel_spec["title"])
+            pair_label = QLabel(COORDINATE_PAIR_FIELD["label"])
+            panel_layout.addWidget(pair_label)
+            pair_edit = QLineEdit()
+            pair_edit.setPlaceholderText(COORDINATE_PAIR_FIELD["placeholder"])
+            pair_edit.setToolTip("輸入格式：緯度,經度")
+            self.coordinate_pair_edits[panel_spec["id"]] = pair_edit
+            panel_layout.addWidget(pair_edit)
             grid = QGridLayout()
             grid.setContentsMargins(0, 0, 0, 0)
             grid.setHorizontalSpacing(8)
@@ -324,12 +337,26 @@ class JoystickWindow(QMainWindow):
                 self.navigate_button.setObjectName("secondaryButton")
                 self.navigate_button.setEnabled(False)
                 self.navigate_button.clicked.connect(self.start_navigation)
-                panel_layout.addWidget(self.navigate_button)
             coordinate_row.addWidget(coordinate_panel, 1)
         self.latitude_edit = self.coordinate_edits["latitude"]
         self.longitude_edit = self.coordinate_edits["longitude"]
         self.destination_latitude_edit = self.coordinate_edits["destination_latitude"]
         self.destination_longitude_edit = self.coordinate_edits["destination_longitude"]
+        self._syncing_coordinate_pairs = set()
+        for panel_id, field_ids in self.coordinate_fields_by_panel.items():
+            pair_edit = self.coordinate_pair_edits[panel_id]
+            pair_edit.textChanged.connect(
+                lambda text, current_panel=panel_id: self._sync_fields_from_pair(
+                    current_panel, text
+                )
+            )
+            for field_id in field_ids:
+                self.coordinate_edits[field_id].textChanged.connect(
+                    lambda text, current_panel=panel_id: self._sync_pair_from_fields(
+                        current_panel, text
+                    )
+                )
+            self._sync_pair_from_fields(panel_id)
         layout.addLayout(coordinate_row)
 
         speed_row = QHBoxLayout()
@@ -343,6 +370,7 @@ class JoystickWindow(QMainWindow):
         self.apply_speed_button.setObjectName("secondaryButton")
         self.apply_speed_button.clicked.connect(self.apply_speed)
         speed_row.addWidget(self.apply_speed_button)
+        speed_row.addWidget(self.navigate_button)
         speed_row.addStretch(1)
         layout.addLayout(speed_row)
 
@@ -372,6 +400,44 @@ class JoystickWindow(QMainWindow):
         heading.setObjectName("coordinateTitle")
         panel_layout.addWidget(heading)
         return panel, panel_layout
+
+    def _sync_fields_from_pair(self, panel_id, text):
+        if panel_id in self._syncing_coordinate_pairs:
+            return
+        parts = text.split(",")
+        if len(parts) != 2:
+            return
+        try:
+            latitude, longitude = self.controller.validate_position(*parts)
+        except ValueError:
+            return
+
+        self._syncing_coordinate_pairs.add(panel_id)
+        try:
+            latitude_field, longitude_field = self.coordinate_fields_by_panel[panel_id]
+            self.coordinate_edits[latitude_field].setText(f"{latitude:.8f}")
+            self.coordinate_edits[longitude_field].setText(f"{longitude:.8f}")
+        finally:
+            self._syncing_coordinate_pairs.remove(panel_id)
+
+    def _sync_pair_from_fields(self, panel_id, _text=""):
+        if panel_id in self._syncing_coordinate_pairs:
+            return
+        latitude_field, longitude_field = self.coordinate_fields_by_panel[panel_id]
+        try:
+            latitude, longitude = self.controller.validate_position(
+                self.coordinate_edits[latitude_field].text(),
+                self.coordinate_edits[longitude_field].text(),
+            )
+        except ValueError:
+            pair_text = ""
+        else:
+            pair_text = f"{latitude:.8f}, {longitude:.8f}"
+        self._syncing_coordinate_pairs.add(panel_id)
+        try:
+            self.coordinate_pair_edits[panel_id].setText(pair_text)
+        finally:
+            self._syncing_coordinate_pairs.remove(panel_id)
 
     def _build_joystick_card(self, parent_layout):
         frame, layout = card(
@@ -511,6 +577,7 @@ class JoystickWindow(QMainWindow):
         self.computer_mode.setEnabled(not busy)
         self.latitude_edit.setEnabled(not busy and not computer)
         self.longitude_edit.setEnabled(not busy and not computer)
+        self.coordinate_pair_edits["origin"].setEnabled(not busy and not computer)
         self.navigate_button.setEnabled(self.connected and not self.closing)
         self.locate_button.setEnabled(not busy and computer)
         self.speed_edit.setEnabled(not self.closing)
