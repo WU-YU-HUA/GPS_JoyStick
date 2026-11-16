@@ -8,8 +8,8 @@ import sys
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QKeyEvent
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QDrag
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -92,6 +92,51 @@ def card(title, description=""):
     return frame, layout
 
 
+class RecordTable(QTableWidget):
+    reorder_requested = Signal(int, int)
+
+    def __init__(self):
+        super().__init__()
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropOverwriteMode(False)
+        self.setAutoScroll(True)
+
+    def startDrag(self, supported_actions):
+        indexes = self.selectedIndexes()
+        if not indexes:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(self.model().mimeData(indexes))
+        # Avoid QAbstractItemView's post-drop source-cell deletion: the
+        # persisted list, rebuilt by the renderer, owns the row movement.
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def dropEvent(self, event):
+        if event.source() is not self:
+            event.ignore()
+            return
+        rows = self.selectionModel().selectedRows()
+        if not rows:
+            event.ignore()
+            return
+        source = rows[0].row()
+        point = event.position().toPoint()
+        index = self.indexAt(point)
+        boundary = self.rowCount()
+        if index.isValid():
+            boundary = index.row() + int(point.y() >= self.visualRect(index).center().y())
+        target = boundary - int(source < boundary)
+        if target != source:
+            self.reorder_requested.emit(source, target)
+        # The controller saves before the renderer rebuilds the rows. Qt's
+        # default cell move would otherwise overwrite cells or leave gaps.
+        event.acceptProposedAction()
+
+
 class DirectionButton(QPushButton):
     """A direction pad button that supports hold and double-click lock."""
 
@@ -158,6 +203,7 @@ class JoystickWindow(QMainWindow):
         app = QApplication.instance()
         if app:
             app.focusChanged.connect(self.on_focus_changed)
+            app.installEventFilter(self)
 
     def _build_ui(self):
         outer = QWidget()
@@ -379,7 +425,10 @@ class JoystickWindow(QMainWindow):
         add_row.addWidget(self.record_button)
         layout.addLayout(add_row)
 
-        self.record_table = QTableWidget(0, 3)
+        self.record_table = RecordTable()
+        self.record_table.setColumnCount(3)
+        self.record_table.reorder_requested.connect(self.reorder_record)
+        self.record_table.setToolTip("拖曳整列可調整收藏順序，放開後自動保存。")
         self.record_table.setHorizontalHeaderLabels([label for _column, label in RECORD_COLUMNS])
         self.record_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.record_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -486,6 +535,8 @@ class JoystickWindow(QMainWindow):
         self.clear_button.setText(ACTION_LABELS["clear"])
         self.record_button.setEnabled(not self.closing and not self.locating and not (self.worker and not self.connected))
         can_edit_records = not self.closing and not self.locating and not (self.worker and not self.connected)
+        self.record_table.setDragEnabled(can_edit_records)
+        self.record_table.setAcceptDrops(can_edit_records)
         self.use_record_button.setEnabled(not busy)
         self.edit_record_button.setEnabled(can_edit_records and self.selected_record_index_or_none() is not None)
         self.delete_record_button.setEnabled(can_edit_records and self.selected_record_index_or_none() is not None)
@@ -555,6 +606,19 @@ class JoystickWindow(QMainWindow):
                 self.record_table.setItem(row, column, item)
         self.refresh_controls()
         return True
+
+    def reorder_record(self, source, target):
+        if self.closing or self.locating or (self.worker and not self.connected):
+            return
+        try:
+            self.records = self.controller.reorder_record(source, target)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            QMessageBox.warning(self, "排序失敗", str(exc))
+            return
+        if self.reload_records():
+            self.record_table.selectRow(target)
+            self.record_table.scrollToItem(self.record_table.item(target, 0))
+        self.set_status("收藏順序已保存至 record.json。")
 
     def selected_record_index_or_none(self):
         rows = self.record_table.selectionModel().selectedRows()
@@ -910,6 +974,27 @@ class JoystickWindow(QMainWindow):
         widget = QApplication.focusWidget()
         return isinstance(widget, (QLineEdit, QTextEdit, QAbstractItemView))
 
+    def eventFilter(self, watched, event):
+        # Qt consumes arrow keys for child-widget focus navigation before they
+        # reach QMainWindow.keyPressEvent. Route movement keys first, while
+        # leaving text editing, table navigation and other windows untouched.
+        if (event.type() in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress, QEvent.Type.KeyRelease)
+                and isinstance(watched, QWidget) and watched.window() is self
+                and self.connected and not self.closing
+                and not self._is_text_or_list_focus()
+                and event.key() in QT_KEY_NAMES):
+            if event.type() == QEvent.Type.ShortcutOverride:
+                event.accept()
+                return True
+            if event.isAutoRepeat():
+                return True
+            if event.type() == QEvent.Type.KeyPress:
+                self.keyPressEvent(event)
+            else:
+                self.keyReleaseEvent(event)
+            return True
+        return super().eventFilter(watched, event)
+
     def keyPressEvent(self, event: QKeyEvent):
         key_name = QT_KEY_NAMES.get(event.key())
         if key_name in KEY_DIRECTIONS and self.connected and not self.closing:
@@ -924,6 +1009,9 @@ class JoystickWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent):
+        if event.isAutoRepeat():
+            event.accept()
+            return
         key_name = QT_KEY_NAMES.get(event.key())
         if key_name in KEY_DIRECTIONS:
             self.movement.key_up(key_name)

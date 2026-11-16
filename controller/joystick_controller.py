@@ -115,6 +115,16 @@ class JoystickController:
         save_records(self.record_path, records, expected=self.records)
         return self.reload_records()
 
+    def reorder_record(self, source, target):
+        if not (0 <= source < len(self.records) and 0 <= target < len(self.records)):
+            raise ValueError("收藏順序已變更，請重新讀取後再拖曳。")
+        if source == target:
+            return self.records
+        records = [dict(record) for record in self.records]
+        records.insert(target, records.pop(source))
+        save_records(self.record_path, records, expected=self.records)
+        return self.reload_records()
+
     def delete_record(self, index):
         records = [dict(record) for record in self.records]
         del records[index]
