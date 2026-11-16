@@ -41,6 +41,10 @@ COORDINATE_FIELDS = {
     "destination_latitude": {"label": "緯度", "placeholder": "-90 至 90"},
     "destination_longitude": {"label": "經度", "placeholder": "-180 至 180"},
 }
+COORDINATE_PAIR_FIELD = {
+    "label": "經緯度",
+    "placeholder": "例如 25.140208,121.709279",
+}
 
 SPEED_FIELD = {"label": "速度", "unit": "km/h"}
 RECORD_COLUMNS = (("label", "標籤"), ("latitude", "緯度"), ("longitude", "經度"))
